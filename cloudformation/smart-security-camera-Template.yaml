@@ -1,0 +1,423 @@
+
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Buckets, Policies and Lambdas for the Smart Security Camera
+
+Parameters:
+  pImageBucketName:
+    Description: Name of the bucket to hold the images
+    Type: String
+  pLogDeployBucket:
+    Description: Name of a bucket where all the logs go and the Lambdas are kept
+    Type: String
+
+  pLambdaPrefix:
+    Description: Location in the Logging bucket where the lambda live 
+    Type: String
+    Default: lambda
+
+  pEmailTo:
+    Description: Who gets email notifications
+    Type: String
+    Default: chris@room17.com
+
+  pEmailFrom:
+    Description: Email which sends the email notifications
+    Type: String
+    Default: chris@room17.com
+
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      S3hostedzoneID: Z3AQBSTGFYJSTF
+      websiteendpoint: s3-website-us-east-1.amazonaws.com
+    us-west-1:
+      S3hostedzoneID: Z2F56UZL2M1ACD
+      websiteendpoint: s3-website-us-west-1.amazonaws.com
+    us-west-2:
+      S3hostedzoneID: Z3BJ6K6RIION7M
+      websiteendpoint: s3-website-us-west-2.amazonaws.com
+    eu-west-1:
+      S3hostedzoneID: Z1BKCTXD74EZPE
+      websiteendpoint: s3-website-eu-west-1.amazonaws.com
+    ap-southeast-1:
+      S3hostedzoneID: Z3O0J2DXBE1FTB
+      websiteendpoint: s3-website-ap-southeast-1.amazonaws.com
+    ap-southeast-2:
+      S3hostedzoneID: Z1WCIGYICN2BYD
+      websiteendpoint: s3-website-ap-southeast-2.amazonaws.com
+    ap-northeast-1:
+      S3hostedzoneID: Z2M4EHUR26P7ZW
+      websiteendpoint: s3-website-ap-northeast-1.amazonaws.com
+    sa-east-1:
+      S3hostedzoneID: Z31GFT0UA1I2HV
+      websiteendpoint: s3-website-sa-east-1.amazonaws.com
+
+Resources:
+
+  LogDeployBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref pLogDeployBucket
+      AccessControl: LogDeliveryWrite
+
+  ImageBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      # AccessControl: PublicRead
+      BucketName: !Ref pImageBucketName
+      LifecycleConfiguration:
+        Rules:
+        - Id: ExpireOldVersions
+          NoncurrentVersionExpirationInDays: '5'
+          Status: Enabled
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - Authorization
+          AllowedMethods:
+          - GET
+          AllowedOrigins:
+          - '*'
+          Id: AllowHTTP
+          MaxAge: '300'
+      WebsiteConfiguration:
+        ErrorDocument: 404.html
+        IndexDocument: index.html
+      LoggingConfiguration:
+        DestinationBucketName: !Ref 'LogDeployBucket'
+        LogFilePrefix: !Join ['', [S3logs/, !Ref pImageBucketName, /]]
+      # NotificationConfiguration:
+      #   LambdaConfigurations:
+      #     - Function: !GetAtt S3TriggerImageProcessingLambdaFunction.Arn
+      #       Event: "s3:ObjectCreated:*"
+      #       Filter:
+      #         S3Key:
+      #           Rules:
+      #             - Name: prefix
+      #               Value: upload
+
+  ImageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: ImageBucket
+    Properties:
+      Bucket: !Ref ImageBucket
+      PolicyDocument:
+        Statement:
+        - Sid: PublicReadGetObjectBasedOnIPAddress
+          Effect: Allow
+          Principal: '*'
+          Action: s3:GetObject
+          Resource: !Join ['', ['arn:aws:s3:::', !Ref ImageBucket , /*]]
+
+  RaspberryPiIAMUser:
+    Type: AWS::IAM::User
+    Properties:
+      Path: /srv/
+      Policies:
+      - PolicyName: GiveAccessToBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource:
+            - !Join ['', ['arn:aws:s3:::', !Ref 'ImageBucket', /*]]
+            - !Join ['', ['arn:aws:s3:::', !Ref 'ImageBucket']]
+          - Effect: Allow
+            Action:
+            - s3:ListAllMyBuckets
+            - s3:GetBucketLocation
+            Resource: '*'
+
+  RaspberryPiIAMUserAPIKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref 'RaspberryPiIAMUser'
+
+  SecurityCameraLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      # ManagedPolicyArns:
+      #   # We need to read info about IAM Users
+      #   # This is probably too permissive.
+      # - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+      Policies:
+      - PolicyName: S3Access
+        # Is this policy needed?
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - s3:*
+            Effect: Allow
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref pImageBucketName , /*]]
+          - Action:
+            - s3:ListAllMyBuckets
+            - s3:GetBucketLocation
+            Effect: Allow
+            Resource: '*'
+      - PolicyName: LambdaLogging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: '*'
+            Action:
+            - logs:*
+            Effect: Allow
+      - PolicyName: SendEmails
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - ses:*
+            Resource: '*'
+      - PolicyName: StartStepFunction
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: "Allow"
+            Action:
+            - states:StartExecution
+            Resource: '*'
+      - PolicyName: ExecuteRekognition
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: "Allow"
+            Action:
+            - rekognition:*
+            Resource: '*'            
+
+  NodemailerErrorHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: nodemailer-error-handler
+      Description: AWS Lamdba Definition for sending Error Emails for the smart-security-camera project
+      Handler: index.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/nodemailer-error-handler.zip
+      Environment:
+        Variables:
+          EMAIL_RECIPIENT: !Ref pEmailTo
+          EMAIL_FROM: !Ref pEmailFrom
+
+  RekognitionImageAssessmentLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: rekognition-image-assessment
+      Description: "smart-security-camera: Sends image from s3 to Amazon Rekognition for Image Processing."
+      Handler: rekognition-image-assessment.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/rekognition-image-assessment.zip
+
+  S3TriggerImageProcessingLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: s3-trigger-image-processing
+      Description: "smart-security-camera: Monitors the s3 buckets /upload directory for new image files and triggers their processing by calling the Step Function"
+      Handler: s3-trigger-image-processing.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/s3-trigger-image-processing.zip
+      Environment:
+        Variables:
+          STEP_MACHINE_ARN: !Ref ImageProcessStateMachine
+
+  NodemailerSendNotificationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: nodemailer-send-notification
+      Description: "smart-security-camera: AWS Lamdba for sending Alert Emails (with image attachment)"
+      Handler: index.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/nodemailer-send-notification.zip
+      Environment:
+        Variables:
+          EMAIL_RECIPIENT: !Ref pEmailTo
+          EMAIL_FROM: !Ref pEmailFrom
+          S3_URL_PREFIX: !GetAtt [ImageBucket, WebsiteURL]
+
+  RekognitionEvaluateLabelsLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: rekognition-evaluate-labels
+      Description: "smart-security-camera: AWS Lamdba that evaluates whether or not to send an alert email for an uploaded picture."
+      Handler: rekognition-evaluate-labels.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/rekognition-evaluate-labels.zip
+
+  S3ArchiveImageLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: s3-archive-image
+      Description: "smart-security-camera: Archives files after successfull processing"
+      Handler: s3-archive-image.handler
+      Runtime: nodejs4.3
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pLogDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/s3-archive-image.zip
+
+  StateMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - !Sub states.${AWS::Region}.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: InvokeLambda        
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - lambda:InvokeFunction
+            Effect: Allow
+            Resource:
+              - !GetAtt NodemailerErrorHandlerLambdaFunction.Arn
+              - !GetAtt RekognitionImageAssessmentLambdaFunction.Arn
+              - !GetAtt NodemailerSendNotificationLambdaFunction.Arn
+              - !GetAtt RekognitionEvaluateLabelsLambdaFunction.Arn
+              - !GetAtt S3ArchiveImageLambdaFunction.Arn
+      - PolicyName: LambdaLogging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: '*'
+            Action:
+            - logs:*
+            Effect: Allow      
+
+  ImageProcessStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      DefinitionString: !Sub |-
+        {
+            "Comment": "Process incoming image files to find out if an email warning is required",
+            "StartAt": "rekognition-image-assessment",
+            "States": {
+
+                "nodemailer-error-handler": {
+                    "Type": "Task",
+                    "Resource": "${NodemailerErrorHandlerLambdaFunction.Arn}" ,
+                    "End": true
+                },
+                "rekognition-image-assessment": {
+                    "Type": "Task",
+                    "Resource": "${RekognitionImageAssessmentLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
+                    "Next": "rekognition-evaluate-labels"
+                },
+                "rekognition-evaluate-labels": {
+                    "Type": "Task",
+                    "Resource": "${RekognitionEvaluateLabelsLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
+                    "Next": "make-alert-decision"
+                },
+
+                "make-alert-decision": {
+                    "Type": "Choice",
+                    "Choices": [{
+                            "Variable": "$.Alert",
+                            "StringEquals": "true",
+                            "Next": "nodemailer-send-notification"
+                        },
+                        {
+                            "Variable": "$.Alert",
+                            "StringEquals": "false",
+                            "Next": "s3-archive-image"
+                        }
+                    ],
+                    "Default": "s3-archive-image"
+                },
+
+                "nodemailer-send-notification": {
+                    "Type": "Task",
+                    "Resource": "${NodemailerSendNotificationLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
+                    "Next": "s3-archive-image"
+                },
+                "s3-archive-image": {
+                    "Type": "Task",
+                    "Resource": "${S3ArchiveImageLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
+                    "End": true
+                }
+            }
+        }
+      RoleArn: !GetAtt StateMachineExecutionRole.Arn
+
+
+
+Outputs:
+  StackName:
+    Value: !Ref AWS::StackName
+  ImageBucket:
+    Value: !Ref ImageBucket
+  ImageBucketURL:
+    Value: !GetAtt [ImageBucket, WebsiteURL]
+  ImageBucketDomainName:
+    Value: !GetAtt [ImageBucket, DomainName]
+  PiUserAccessKey:
+    Value: !Ref 'RaspberryPiIAMUserAPIKey'
+  PiUserArn:
+    Value: !Ref 'RaspberryPiIAMUser'
+  PiUserSecretAccessKey:
+    Value: !GetAtt [RaspberryPiIAMUserAPIKey, SecretAccessKey]
+
