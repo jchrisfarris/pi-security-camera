@@ -3,7 +3,7 @@ exports.handler = (event, context, callback) => {
   var aws = require('aws-sdk');
   var nodemailer = require('nodemailer');
   var sesTransport = require('nodemailer-ses-transport');
-  var ses = new aws.SES({apiVersion: '2010-12-01', region: 'eu-west-1'});
+  var ses = new aws.SES({apiVersion: '2010-12-01'});
   var s3 = new aws.S3();
 
   // Set up ses as tranport for email
@@ -44,11 +44,11 @@ exports.handler = (event, context, callback) => {
       attachments: [
         {
             filename: localFile,
-            path: process.env.S3_URL_PREFIX + bucket + '/'+ filename
+            path: process.env.S3_URL_PREFIX + '/'+ filename
         }
       ]
   }
-
+  console.log(mailOptions)
   transport.sendMail(mailOptions, function(error, info){
       if(error){
         var errorMessage =  'Error in [nodemailer-send-notification].\r' +
