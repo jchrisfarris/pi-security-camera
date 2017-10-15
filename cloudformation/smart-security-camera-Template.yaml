@@ -7,6 +7,7 @@ Parameters:
   pImageBucketName:
     Description: Name of the bucket to hold the images
     Type: String
+
   pLogDeployBucket:
     Description: Name of a bucket where all the logs go and the Lambdas are kept
     Type: String
@@ -26,6 +27,15 @@ Parameters:
     Type: String
     Default: chris@room17.com
 
+  # Slack Parameters passed as Env Vars to Lambda
+  pSlackWebhookURL:
+    Description: WebHook URL from Slack. Keep this secret
+    Type: String
+
+  pSlackChannel:
+    Description: Slack Channel to send the spam to
+    Type: String
+    Default: '#camera'
 
 Mappings:
   RegionMap:
@@ -93,14 +103,27 @@ Resources:
         DestinationBucketName: !Ref 'LogDeployBucket'
         LogFilePrefix: !Join ['', [S3logs/, !Ref pImageBucketName, /]]
       # NotificationConfiguration:
-      #   LambdaConfigurations:
-      #     - Function: !GetAtt S3TriggerImageProcessingLambdaFunction.Arn
+      #   TopicConfigurations:
+      #     - Topic: !Ref NewFileTopic
       #       Event: "s3:ObjectCreated:*"
       #       Filter:
       #         S3Key:
       #           Rules:
       #             - Name: prefix
-      #               Value: upload
+      #               Value: "upload/"
+
+  NewFileTopic:
+    Type: "AWS::SNS::Topic"
+    Properties: 
+      DisplayName: smartcamera-NewFileArrived
+      # TopicName: smartcamera-NewFileArrived
+
+  NewFileTriggerLambdaSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Endpoint: !GetAtt S3TriggerImageProcessingLambdaFunction.Arn
+      Protocol: lambda
+      TopicArn: !Ref NewFileTopic
 
   ImageBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -128,8 +151,8 @@ Resources:
             Action:
             - s3:*
             Resource:
-            - !Join ['', ['arn:aws:s3:::', !Ref 'ImageBucket', /*]]
-            - !Join ['', ['arn:aws:s3:::', !Ref 'ImageBucket']]
+            - !Join ['', ['arn:aws:s3:::', !Ref 'pImageBucketName', /*]]
+            - !Join ['', ['arn:aws:s3:::', !Ref 'pImageBucketName']]
           - Effect: Allow
             Action:
             - s3:ListAllMyBuckets
@@ -141,6 +164,7 @@ Resources:
     Properties:
       UserName: !Ref 'RaspberryPiIAMUser'
 
+  # This IAM Role defines the permissions all the Lambda functions have when the execute
   SecurityCameraLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -154,10 +178,6 @@ Resources:
           Action:
           - sts:AssumeRole
       Path: /
-      # ManagedPolicyArns:
-      #   # We need to read info about IAM Users
-      #   # This is probably too permissive.
-      # - arn:aws:iam::aws:policy/IAMReadOnlyAccess
       Policies:
       - PolicyName: S3Access
         # Is this policy needed?
@@ -167,7 +187,9 @@ Resources:
           - Action:
             - s3:*
             Effect: Allow
-            Resource: !Join ['', ['arn:aws:s3:::', !Ref pImageBucketName , /*]]
+            Resource: 
+              - !Join ['', ['arn:aws:s3:::', !Ref pImageBucketName , /*]]
+              - !Join ['', ['arn:aws:s3:::', !Ref pImageBucketName ]]
           - Action:
             - s3:ListAllMyBuckets
             - s3:GetBucketLocation
@@ -204,12 +226,21 @@ Resources:
           - Effect: "Allow"
             Action:
             - rekognition:*
-            Resource: '*'            
+            Resource: '*'
+      - PolicyName: PublishToSNS
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: "Allow"
+            Action:
+            - sns:publish
+            # FIXME
+            Resource: '*'
 
   NodemailerErrorHandlerLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: nodemailer-error-handler
+      FunctionName: smartcamera-error-handler
       Description: AWS Lamdba Definition for sending Error Emails for the smart-security-camera project
       Handler: index.handler
       Runtime: nodejs4.3
@@ -226,7 +257,7 @@ Resources:
   RekognitionImageAssessmentLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: rekognition-image-assessment
+      FunctionName: smartcamera-image-assessment
       Description: "smart-security-camera: Sends image from s3 to Amazon Rekognition for Image Processing."
       Handler: rekognition-image-assessment.handler
       Runtime: nodejs4.3
@@ -239,7 +270,7 @@ Resources:
   S3TriggerImageProcessingLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: s3-trigger-image-processing
+      FunctionName: smartcamera-trigger-processing
       Description: "smart-security-camera: Monitors the s3 buckets /upload directory for new image files and triggers their processing by calling the Step Function"
       Handler: s3-trigger-image-processing.handler
       Runtime: nodejs4.3
@@ -255,7 +286,7 @@ Resources:
   NodemailerSendNotificationLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: nodemailer-send-notification
+      FunctionName: smartcamera-send-notification
       Description: "smart-security-camera: AWS Lamdba for sending Alert Emails (with image attachment)"
       Handler: index.handler
       Runtime: nodejs4.3
@@ -273,7 +304,7 @@ Resources:
   RekognitionEvaluateLabelsLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: rekognition-evaluate-labels
+      FunctionName: smartcamera-evaluate-labels
       Description: "smart-security-camera: AWS Lamdba that evaluates whether or not to send an alert email for an uploaded picture."
       Handler: rekognition-evaluate-labels.handler
       Runtime: nodejs4.3
@@ -286,16 +317,254 @@ Resources:
   S3ArchiveImageLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: s3-archive-image
+      FunctionName: smartcamera-archive-image
       Description: "smart-security-camera: Archives files after successfull processing"
-      Handler: s3-archive-image.handler
-      Runtime: nodejs4.3
+      Handler: index.lambda_handler
+      Runtime: python3.6
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
-        S3Key: !Sub ${pLambdaPrefix}/s3-archive-image.zip
+        ZipFile: |
+          from __future__ import print_function
+          import boto3
+          import botocore
+          from botocore.exceptions import ClientError
+          import os
+          import json
+          from pprint import pprint
+          import datetime
+          from dateutil import tz
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
 
+          class FailedToMoveFile(Exception): pass
+
+
+          def lambda_handler(event, context):
+            logger.info("Received event: " + json.dumps(event, sort_keys=True))
+            s3client = boto3.client('s3')
+
+            today = "{:%Y-%m-%d}".format(datetime.datetime.now(tz.gettz('US/Eastern')))
+            bucket = event['bucket'];
+            old_key = event['key'];
+            try:
+              alert = event['Alert'];
+            except KeyError:
+              alert = False 
+
+            filename = old_key.split('/')[-1]
+
+            if alert == "true":
+              new_key = "archive/{}/alert/{}".format(today, filename)
+            else:
+              new_key = "archive/{}/falsepositive/{}".format(today, filename)
+              
+            logger.info("copying {} to {}".format(old_key, new_key))
+            try:
+              response = s3client.copy_object(
+                Bucket=bucket,
+                CopySource="{}/{}".format(bucket, old_key),
+                Key=new_key
+              )
+              logger.info("Copy Response: {}".format(response))
+              
+            except ClientError as e:
+              logger.error("Unable to move {} to {}: {}".format(old_key, new_key, e))
+              raise FailedToMoveFile("Unable to move {} to {}: {}".format(old_key, new_key, e))
+            if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+                logger.info("deleting {}".format(old_key))
+                try:
+                  response = s3client.delete_object(
+                    Bucket=bucket,
+                    Key=old_key
+                  )
+                except ClientError as e:
+                  logger.error("Unable to move {} to {}: {}".format(old_key, new_key, e))
+
+            # Override the key to the new file name
+            event['key'] = new_key
+            return(event)
+          ### End of Function
+
+  GenerateIndexLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: smartcamera-generate-index-page
+      Description: "smart-security-camera: Generate html page to browse all images"
+      Handler: index.lambda_handler
+      Runtime: python3.6
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref pImageBucketName
+      Code:
+        ZipFile: |
+          from __future__ import print_function
+          import boto3
+          import botocore
+          from botocore.exceptions import ClientError
+          import os
+          import json
+          from pprint import pprint
+          import datetime
+          from dateutil import tz
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          prefix = "https://s3.amazonaws.com/{}/"
+
+          entry_html = "<a href={}><img src={} width=480></a>\n"
+
+          # https://s3.amazonaws.com/security-camera-images-dev1/movies/2017-09-09/20170909191639-01-02.mp4
+          movie_url = "https://s3.amazonaws.com/{}/movies/{}/{}.mp4"
+
+          header = """
+          <html>
+          <head><title>Index Page for {}</title></head>
+          <body>
+          """
+
+          footer = """<br/>
+          Generated at {:%Y-%m-%d %H:%M:%S}
+          </body>
+          </html>
+          """
+
+          def lambda_handler(event, context):
+            logger.info("Received event: " + json.dumps(event, sort_keys=True))
+            today = "{:%Y-%m-%d}".format(datetime.datetime.now(tz.gettz('US/Eastern')))
+            html = header.format(today)
+            object_list = get_objects()
+            # pprint(object_list)
+            for o in object_list:
+              if "jpg" not in o:
+                continue
+              url = prefix.format(os.environ['BUCKET_NAME']) + o
+
+              
+              filename = o.split('/')[-1]
+              fileprefix = filename.replace('.jpg', '')
+              mp4 = movie_url.format(os.environ['BUCKET_NAME'], today, fileprefix)
+
+              html = html + entry_html.format(mp4, url)
+
+            html = html + footer.format(datetime.datetime.now(tz.gettz('US/Eastern')))
+
+            # print(html)
+
+            index_key = "archive/{:%Y-%m-%d}/index.html".format(datetime.datetime.now())
+            index_url = prefix.format(os.environ['BUCKET_NAME']) + index_key
+
+            client = boto3.client('s3')
+            response = client.put_object(
+              ACL='public-read',
+              Body=html,
+              Bucket=os.environ['BUCKET_NAME'],
+              Key=index_key,
+              ContentType="text/html; charset=utf-8"
+            )
+            # pprint(response)
+
+            sns = boto3.client('sns')
+            response = sns.publish(
+              TopicArn='arn:aws:sns:us-east-1:379153516938:DoorAlert',
+              Message="New Index File: {}".format(index_url),
+              Subject='New Index File Generated',
+              )
+
+            event['index_url'] = index_url
+            return(event)
+
+          def get_objects():
+            output = []
+
+            try:
+              client = boto3.client('s3')
+              response = client.list_objects(
+                Bucket=os.environ['BUCKET_NAME'],
+                MaxKeys=1024,
+                Prefix="archive/{:%Y-%m-%d}/".format(datetime.datetime.now(tz.gettz('US/Eastern')))
+              )
+
+              sorted_list = sorted(response['Contents'], key=lambda s: s['LastModified'])
+
+              for o in sorted_list:
+                output.append(o['Key'])
+            except ClientError as e:
+              logger.error("Error: {}".format(e))
+
+            return(output)
+            
+          ### END OF FUNCTION ###
+
+  SlackNotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: smartcamera-publish-slack-notification
+      Description: "smart-security-camera: Send the image to Slack"
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      Timeout: 300
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Environment:
+        Variables:
+          HOOK_URL: !Ref pSlackWebhookURL
+          SLACK_CHANNEL: !Ref pSlackChannel
+      Code:
+        ZipFile: |
+          # Lambda to send SNS Messages to Slack
+          from __future__ import print_function
+
+          import boto3
+          import json
+          import logging
+          import os
+          import datetime
+          from dateutil import tz
+
+          from base64 import b64decode
+          from urllib2 import Request, urlopen, URLError, HTTPError
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              logger.info("Received event: " + json.dumps(event, sort_keys=True))
+              filename = event['key'].split('/')[-1]
+              camera = filename.split('-')[0]
+              icon = ":camera:"
+              if event['Alert'] == "true":
+                  icon = ":camera_with_flash:"
+              
+              image_url = "https://s3.amazonaws.com/{}/{}".format(event['bucket'], event['key'])
+              attachments = [{"image_url": image_url}]
+
+              slack_message = {
+                  'channel': os.environ['SLACK_CHANNEL'],
+                  'username': camera,
+                  'text': "Image from: {} Alert: {}\n{}".format(datetime.datetime.now(tz.gettz('US/Eastern')), 
+                      event['Alert'], event['index_url']),
+                  'icon_emoji': icon,
+                  'attachments': attachments
+              }
+
+              req = Request(os.environ['HOOK_URL'], json.dumps(slack_message))
+              try:
+                  response = urlopen(req)
+                  response.read()
+                  logger.info("Message posted to %s", slack_message['channel'])
+              except HTTPError as e:
+                  logger.error("Request failed: %d %s", e.code, e.reason)
+              except URLError as e:
+                  logger.error("Server connection failed: %s", e.reason)
+
+            
+          ### END OF FUNCTION ###
+
+  # This IAM Role defines the permissions the Step Machine requires to execute
   StateMachineExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -318,11 +587,14 @@ Resources:
             - lambda:InvokeFunction
             Effect: Allow
             Resource:
+              # Each Lambda function should be defined here
               - !GetAtt NodemailerErrorHandlerLambdaFunction.Arn
               - !GetAtt RekognitionImageAssessmentLambdaFunction.Arn
               - !GetAtt NodemailerSendNotificationLambdaFunction.Arn
               - !GetAtt RekognitionEvaluateLabelsLambdaFunction.Arn
               - !GetAtt S3ArchiveImageLambdaFunction.Arn
+              - !GetAtt GenerateIndexLambdaFunction.Arn
+              - !GetAtt SlackNotificationFunction.Arn
       - PolicyName: LambdaLogging
         PolicyDocument:
           Version: '2012-10-17'
@@ -332,6 +604,7 @@ Resources:
             - logs:*
             Effect: Allow      
 
+  # Define the Statemachine
   ImageProcessStateMachine:
     Type: AWS::StepFunctions::StateMachine
     Properties:
@@ -340,7 +613,6 @@ Resources:
             "Comment": "Process incoming image files to find out if an email warning is required",
             "StartAt": "rekognition-image-assessment",
             "States": {
-
                 "nodemailer-error-handler": {
                     "Type": "Task",
                     "Resource": "${NodemailerErrorHandlerLambdaFunction.Arn}" ,
@@ -380,7 +652,6 @@ Resources:
                     ],
                     "Default": "s3-archive-image"
                 },
-
                 "nodemailer-send-notification": {
                     "Type": "Task",
                     "Resource": "${NodemailerSendNotificationLambdaFunction.Arn}",
@@ -397,13 +668,29 @@ Resources:
                         "ErrorEquals": ["States.ALL"],
                         "Next": "nodemailer-error-handler"
                     }],
+                    "Next": "s3-generate-index"
+                },                
+                "s3-generate-index": {
+                    "Type": "Task",
+                    "Resource": "${GenerateIndexLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
+                    "Next": "slack-notification"
+                },
+                "slack-notification": {
+                    "Type": "Task",
+                    "Resource": "${SlackNotificationFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "nodemailer-error-handler"
+                    }],
                     "End": true
                 }
             }
         }
       RoleArn: !GetAtt StateMachineExecutionRole.Arn
-
-
 
 Outputs:
   StackName:
