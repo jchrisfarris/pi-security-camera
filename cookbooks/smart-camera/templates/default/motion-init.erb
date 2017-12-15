@@ -1,0 +1,130 @@
+#! /bin/sh
+#### NOTICE: This file managed via CHEF! ######
+#### NOTICE: This file managed via CHEF! ######
+
+### BEGIN INIT INFO
+# Provides:          pht-init
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Execute things when a pht aws instance boots
+# Description:       Updates DNS, runs chef, other stuff
+#                    
+### END INIT INFO
+
+# Author: Chris Farris <chris@primeharbor.com>
+#
+# Please remove the "Author" lines above and replace them
+# with your own name if you copy and modify this script.
+
+# Do NOT "set -e"
+
+# Read configuration variable file if it is present
+#[ -r /etc/default/$NAME ] && . /etc/default/$NAME
+
+# Load the VERBOSE setting and other rcS variables
+. /lib/init/vars.sh
+
+# Define LSB log_* functions.
+# Depend on lsb-base (>= 3.2-14) to ensure that this file is present
+# and status_of_proc is working.
+. /lib/lsb/init-functions
+
+#
+# Function that starts the daemon/service
+#
+do_start()
+{
+	# Return
+	#   0 if daemon has been started
+	#   1 if daemon was already running
+	#   2 if daemon could not be started
+	if [ `whoami` != "root" ] ; then
+          return 2
+	fi
+	sudo modprobe bcm2835-v4l2
+
+	start-stop-daemon --start --oknodo --user pi --name motion \
+                   --pidfile /var/run/motion/motion.pid --startas /usr/local/bin/motion  \
+                   --chuid pi -- -c <%= @base_dir %>/etc/motion.conf
+
+
+	#motion -c <%= @base_dir %>/etc/motion.conf
+	return 0	
+}
+
+#
+# Function that stops the daemon/service
+#  
+do_stop()
+{
+	# Return
+	#   0 if daemon has been stopped
+	#   1 if daemon was already stopped
+	#   2 if daemon could not be stopped
+	#   other if a failure occurred
+	start-stop-daemon --stop --oknodo --user pi --name motion \
+                   --pidfile /var/run/motion/motion.pid --retry 5
+    sleep 2
+    killall motion
+	return 0
+}
+
+do_status()
+{
+	# Return
+	#   0 if daemon has been stopped
+	#   1 if daemon was already stopped
+	#   2 if daemon could not be stopped
+	#   other if a failure occurred
+	start-stop-daemon --status --oknodo --user pi --name motion \
+                   --pidfile /var/run/motion/motion.pid 
+	return 0
+}
+
+#
+# Function that sends a SIGHUP to the daemon/service
+#
+do_reload() {
+	#
+	# If the daemon can reload its configuration without
+	# restarting (for example, when it is sent a SIGHUP),
+	# then implement that here.
+	#
+	do_stop()
+	do_start()
+	return 0
+}
+
+case "$1" in
+  start)
+	[ "$VERBOSE" != no ] && log_daemon_msg "Starting $DESC" "$NAME"
+	do_start
+	case "$?" in
+		0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
+		2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
+	esac
+	;;
+  stop)
+	[ "$VERBOSE" != no ] && log_daemon_msg "Stopping $DESC" "$NAME"
+	do_stop
+	case "$?" in
+		0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
+		2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
+	esac
+	;;
+  status)
+  	do_status
+  	;;
+  restart|force-reload)
+	do_reload
+	;;
+  *)
+	#echo "Usage: $SCRIPTNAME {start|stop|restart|reload|force-reload}" >&2
+	echo "Usage: $SCRIPTNAME {start|stop|status|restart|force-reload}" >&2
+	exit 3
+	;;
+esac
+
+:
