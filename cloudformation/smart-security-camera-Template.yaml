@@ -8,14 +8,15 @@ Parameters:
     Description: Name of the bucket to hold the images
     Type: String
 
-  pLogDeployBucket:
-    Description: Name of a bucket where all the logs go and the Lambdas are kept
-    Type: String
-
   pLambdaPrefix:
     Description: Location in the Logging bucket where the lambda live 
     Type: String
     Default: lambda
+
+  pLambdaNameSuffix:
+    Description: This string is appended to the Lambda Function Name 
+    Type: String
+    Default: ""
 
   pEmailTo:
     Description: Who gets email notifications
@@ -36,6 +37,14 @@ Parameters:
     Description: Slack Channel to send the spam to
     Type: String
     Default: '#camera'
+
+  pLogBucket:
+    Description: Name of Bucket for S3 logs
+    Type: String
+
+  pDeployBucket:
+    Description: Name of Bucket where Lambda functions are copied
+    Type: String
 
 Mappings:
   RegionMap:
@@ -66,13 +75,6 @@ Mappings:
 
 Resources:
 
-  LogDeployBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    Properties:
-      BucketName: !Ref pLogDeployBucket
-      AccessControl: LogDeliveryWrite
-
   ImageBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -100,7 +102,7 @@ Resources:
         ErrorDocument: 404.html
         IndexDocument: index.html
       LoggingConfiguration:
-        DestinationBucketName: !Ref 'LogDeployBucket'
+        DestinationBucketName: !Ref 'pLogBucket'
         LogFilePrefix: !Join ['', [S3logs/, !Ref pImageBucketName, /]]
       # NotificationConfiguration:
       #   TopicConfigurations:
@@ -240,14 +242,14 @@ Resources:
   NodemailerErrorHandlerLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-error-handler
+      FunctionName: !Sub "smartcamera-error-handler-${pLambdaNameSuffix}"
       Description: AWS Lamdba Definition for sending Error Emails for the smart-security-camera project
       Handler: index.handler
       Runtime: nodejs4.3
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
+        S3Bucket: !Ref pDeployBucket
         S3Key: !Sub ${pLambdaPrefix}/nodemailer-error-handler.zip
       Environment:
         Variables:
@@ -257,27 +259,27 @@ Resources:
   RekognitionImageAssessmentLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-image-assessment
+      FunctionName: !Sub "smartcamera-image-assessment-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: Sends image from s3 to Amazon Rekognition for Image Processing."
       Handler: rekognition-image-assessment.handler
       Runtime: nodejs4.3
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
+        S3Bucket: !Ref pDeployBucket
         S3Key: !Sub ${pLambdaPrefix}/rekognition-image-assessment.zip
 
   S3TriggerImageProcessingLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-trigger-processing
+      FunctionName: !Sub "smartcamera-trigger-processing-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: Monitors the s3 buckets /upload directory for new image files and triggers their processing by calling the Step Function"
       Handler: s3-trigger-image-processing.handler
       Runtime: nodejs4.3
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
+        S3Bucket: !Ref pDeployBucket
         S3Key: !Sub ${pLambdaPrefix}/s3-trigger-image-processing.zip
       Environment:
         Variables:
@@ -286,14 +288,14 @@ Resources:
   NodemailerSendNotificationLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-send-notification
+      FunctionName: !Sub "smartcamera-send-notification-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: AWS Lamdba for sending Alert Emails (with image attachment)"
       Handler: index.handler
       Runtime: nodejs4.3
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
+        S3Bucket: !Ref pDeployBucket
         S3Key: !Sub ${pLambdaPrefix}/nodemailer-send-notification.zip
       Environment:
         Variables:
@@ -304,20 +306,20 @@ Resources:
   RekognitionEvaluateLabelsLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-evaluate-labels
+      FunctionName: !Sub "smartcamera-evaluate-labels-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: AWS Lamdba that evaluates whether or not to send an alert email for an uploaded picture."
       Handler: rekognition-evaluate-labels.handler
       Runtime: nodejs4.3
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
       Code:
-        S3Bucket: !Ref pLogDeployBucket
+        S3Bucket: !Ref pDeployBucket
         S3Key: !Sub ${pLambdaPrefix}/rekognition-evaluate-labels.zip
 
   S3ArchiveImageLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-archive-image
+      FunctionName: !Sub "smartcamera-archive-image-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: Archives files after successfull processing"
       Handler: index.lambda_handler
       Runtime: python3.6
@@ -390,7 +392,7 @@ Resources:
   GenerateIndexLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-generate-index-page
+      FunctionName: !Sub "smartcamera-generate-index-page-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: Generate html page to browse all images"
       Handler: index.lambda_handler
       Runtime: python3.6
@@ -503,7 +505,7 @@ Resources:
   SlackNotificationFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: smartcamera-publish-slack-notification
+      FunctionName: !Sub "smartcamera-publish-slack-notification-${pLambdaNameSuffix}" 
       Description: "smart-security-camera: Send the image to Slack"
       Handler: index.lambda_handler
       Runtime: python2.7
