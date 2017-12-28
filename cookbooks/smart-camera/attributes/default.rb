@@ -21,6 +21,6 @@ default['camera']['motion_conf']['event_gap'] = "30"
 default['camera']['motion_conf']['output_pictures'] = "best"
 default['camera']['motion_conf']['locate_motion_mode'] = "preview"
 
-
+default['camera']['api_key_databag'] = "camera"
 
 # <%= @motion['rotate'] %>

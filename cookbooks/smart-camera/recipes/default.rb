@@ -8,7 +8,7 @@
 #
 
 secret = Chef::EncryptedDataBagItem.load_secret('/etc/chef/encrypted_data_bag_secret')
-camera_data = Chef::EncryptedDataBagItem.load('pht-enc', 'camera', secret)
+camera_data = Chef::EncryptedDataBagItem.load('pht-enc', node['camera']['api_key_databag'], secret)
 
 %w(gdebi-core ssmtp mailutils mpack openssh-server awscli).each do |p|
   apt_package p
