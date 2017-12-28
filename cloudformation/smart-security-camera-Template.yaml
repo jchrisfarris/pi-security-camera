@@ -610,6 +610,7 @@ Resources:
   ImageProcessStateMachine:
     Type: AWS::StepFunctions::StateMachine
     Properties:
+      StateMachineName: !Ref AWS::StackName
       DefinitionString: !Sub |-
         {
             "Comment": "Process incoming image files to find out if an email warning is required",
