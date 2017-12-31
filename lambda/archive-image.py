@@ -16,23 +16,48 @@ class FailedToMoveFile(Exception): pass
 
 def lambda_handler(event, context):
   logger.info("Received event: " + json.dumps(event, sort_keys=True))
-  s3client = boto3.client('s3')
 
   today = "{:%Y-%m-%d}".format(datetime.datetime.now(tz.gettz('US/Eastern')))
   bucket = event['bucket'];
-  old_key = event['key'];
-  try:
-    alert = event['Alert'];
-  except KeyError:
-    alert = False 
 
-  filename = old_key.split('/')[-1]
+  alert = event['Alert']
+  
+  movie_key = event['movie_key']
+  movie_filename = movie_key.split('/')[-1]
+
 
   if alert == "true":
-    new_key = "archive/{}/alert/{}".format(today, filename)
+    image_key = "{}/{}".format(event['config']['tempdir'], event['active_image'])
+    image_filename = image_key.split('/')[-1]
+    new_image_key = "archive/{}/alert/{}".format(today, image_filename)
+    new_movie_key = "archive/{}/alert/{}".format(today, movie_filename)
   else:
-    new_key = "archive/{}/falsepositive/{}".format(today, filename)
+    image_key = "{}/{}".format(event['config']['tempdir'], findMiddle(event['images']))
+    image_filename = image_key.split('/')[-1]
+    new_image_key = "archive/{}/falsepositive/{}".format(today, image_filename)
+    new_movie_key = "archive/{}/falsepositive/{}".format(today, movie_filename)
+    logger.info("Picked {} as random keyframe vs {}".format(image_key, event['active_image']))
+
     
+  move_file(bucket, image_key, new_image_key)
+  move_file(bucket, movie_key, new_movie_key)
+
+  # Override the key to the new file name
+  event['movie_key'] = new_movie_key
+  event['keyframe_image'] = new_image_key
+  del event['active_image']
+  return(event)
+### End of Function
+
+def findMiddle(input_list):
+  middle = float(len(input_list))/2
+  if middle % 2 != 0:
+      return(input_list[int(middle - .5)])
+  else:
+      return(input_list[int(middle)])
+
+def move_file(bucket, old_key, new_key):
+  s3client = boto3.client('s3')
   logger.info("copying {} to {}".format(old_key, new_key))
   try:
     response = s3client.copy_object(
@@ -41,10 +66,10 @@ def lambda_handler(event, context):
       Key=new_key
     )
     logger.info("Copy Response: {}".format(response))
-    
   except ClientError as e:
     logger.error("Unable to move {} to {}: {}".format(old_key, new_key, e))
     raise FailedToMoveFile("Unable to move {} to {}: {}".format(old_key, new_key, e))
+
   if response['ResponseMetadata']['HTTPStatusCode'] == 200:
       logger.info("deleting {}".format(old_key))
       try:
@@ -54,8 +79,3 @@ def lambda_handler(event, context):
         )
       except ClientError as e:
         logger.error("Unable to move {} to {}: {}".format(old_key, new_key, e))
-
-  # Override the key to the new file name
-  event['key'] = new_key
-  return(event)
-### End of Function

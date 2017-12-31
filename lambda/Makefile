@@ -30,8 +30,8 @@ modules: clean
 	# pip3 install $(MODULE_HOME) -t . --upgrade	
 
 # # Create the package Zip. Assumes all tests were done
-zipfile: $(FILES)
-	zip -r $(LAMBDA_PACKAGE) $^  
+zipfile: $(FILES) ../config.json
+	zip -rj $(LAMBDA_PACKAGE) $^  
 
 test: $(FILES)
 	for f in $^; do $(PYTHON) -m py_compile $$f; if [ $$? -ne 0 ] ; then echo "$$f FAILS" ; exit 1; fi done

@@ -2,7 +2,8 @@
 ATTIC/
 
 # This has secret stuffs
-config.json 
+config.json
+*.zip
 
 
 # Created by https://www.gitignore.io/api/osx,python

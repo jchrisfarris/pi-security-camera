@@ -8,8 +8,17 @@ Parameters:
     Description: Name of the bucket to hold the images
     Type: String
 
+  pDeployBucket:
+    Description: Name of Bucket where Lambda functions are copied
+    Type: String
+
   pLambdaZipFile:
-    Description: Location in the Logging bucket where the lambda live 
+    Description: Key Name for the Lambda zip file in the Deploy Bucket 
+    Type: String
+    Default: lambda.zip
+
+  pExtractLambdaZipFile:
+    Description: Key Name for the KeyFrame Extract Lambda zip file in the Deploy Bucket  
     Type: String
     Default: lambda.zip
 
@@ -18,39 +27,14 @@ Parameters:
     Type: String
     Default: ""
 
-  pEmailTo:
-    Description: Who gets email notifications
-    Type: String
-    Default: chris@room17.com
-
-  pEmailFrom:
-    Description: Email which sends the email notifications
-    Type: String
-    Default: chris@room17.com
-
-  # Slack Parameters passed as Env Vars to Lambda
-  pSlackWebhookURL:
-    Description: WebHook URL from Slack. Keep this secret
-    Type: String
-
-  pSlackChannel:
-    Description: Slack Channel to send the spam to
-    Type: String
-    Default: '#camera'
-
   pLogBucket:
     Description: Name of Bucket for S3 logs
     Type: String
 
-  pDeployBucket:
-    Description: Name of Bucket where Lambda functions are copied
+  pConfigFile:
+    Description: Name of json file containing the config elements
     Type: String
-
-  pMinimumConfidence:
-    Description: Ignore all rekognition labels below this float
-    Type: String
-    Default: "50.0"
-
+    Default: config.json
 
 Mappings:
   RegionMap:
@@ -92,6 +76,14 @@ Resources:
         - Id: ExpireOldVersions
           NoncurrentVersionExpirationInDays: '5'
           Status: Enabled
+        # - Id: PurgeTmp
+        #   Prefix: "tmp/"
+        #   ExpirationInDays: '1'
+        #   Status: Enabled
+        # - Id: PurgeUpload
+        #   Prefix: "upload/"
+        #   ExpirationInDays: '7'
+        #   Status: Enabled  
       VersioningConfiguration:
         Status: Enabled
       CorsConfiguration:
@@ -126,12 +118,38 @@ Resources:
       DisplayName: smartcamera-NewFileArrived
       # TopicName: smartcamera-NewFileArrived
 
+  NewFileTopicPolicy:
+    Type: "AWS::SNS::TopicPolicy"
+    Properties: 
+      Topics: 
+        - !Ref NewFileTopic
+      PolicyDocument:
+        Id: AllowS3Notifications
+        Version: 2008-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: s3.amazonaws.com
+          Action: SNS:Publish
+          Resource: !Ref NewFileTopic
+          Condition:
+            ArnLike:
+              aws:SourceArn: !Sub "arn:aws:s3:*:*:${pImageBucketName}"   
+
   NewFileTriggerLambdaSubscription:
     Type: "AWS::SNS::Subscription"
     Properties:
       Endpoint: !GetAtt S3TriggerImageProcessingLambdaFunction.Arn
       Protocol: lambda
       TopicArn: !Ref NewFileTopic
+
+  NewFileTriggerLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt S3TriggerImageProcessingLambdaFunction.Arn
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref NewFileTopic
+      Action: lambda:invokeFunction
 
   ImageBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -245,11 +263,11 @@ Resources:
             # FIXME
             Resource: '*'
 
-  NodemailerErrorHandlerLambdaFunction:
+  ErrorHandlerLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "smartcamera-error-handler-${pEnvironment}"
-      Description: AWS Lamdba Definition for sending Error Emails for the smart-security-camera project
+      FunctionName: !Sub "smartcamera-errorhandler-${pEnvironment}"
+      Description: "smart-security-camera: General Error Handler"
       Handler: error-handler.lambda_handler
       Runtime: python3.6
       Timeout: 300
@@ -257,10 +275,6 @@ Resources:
       Code:
         S3Bucket: !Ref pDeployBucket
         S3Key: !Ref pLambdaZipFile
-      Environment:
-        Variables:
-          EMAIL_RECIPIENT: !Ref pEmailTo
-          EMAIL_FROM: !Ref pEmailFrom
 
   RekognitionImageAssessmentLambdaFunction:
     Type: AWS::Lambda::Function
@@ -270,10 +284,7 @@ Resources:
       Handler: rekognition-image-assessment.lambda_handler
       Runtime: python3.6
       Timeout: 300
-      Role: !GetAtt SecurityCameraLambdaRole.Arn
-      Environment:
-        Variables:
-          MIN_CONFIDENCE: !Ref pMinimumConfidence      
+      Role: !GetAtt SecurityCameraLambdaRole.Arn   
       Code:
         S3Bucket: !Ref pDeployBucket
         S3Key: !Ref pLambdaZipFile
@@ -282,7 +293,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "smartcamera-trigger-statemachine-${pEnvironment}" 
-      Description: "smart-security-camera: Trigger the Statemachine when it recieves and event from the frame extraction lambda"
+      Description: "smart-security-camera: Trigger the Statemachine when it recieves and event from the image bucket"
       Handler: s3-trigger-image-processing.lambda_handler
       Runtime: python3.6
       Timeout: 300
@@ -290,15 +301,16 @@ Resources:
       Environment:
         Variables:
           STEP_MACHINE_ARN: !Ref ImageProcessStateMachine
+          CONFIG_FILE: !Ref pConfigFile
       Code:
         S3Bucket: !Ref pDeployBucket
         S3Key: !Ref pLambdaZipFile
 
-  NodemailerSendNotificationLambdaFunction:
+  SendEmailLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub "smartcamera-send-notification-${pEnvironment}" 
-      Description: "smart-security-camera: AWS Lamdba for sending Alert Emails (with image attachment)"
+      FunctionName: !Sub "smartcamera-send-email-${pEnvironment}" 
+      Description: "smart-security-camera: AWS Lambda for sending Alert Emails (with image attachment)"
       Handler: send-notification.lambda_handler
       Runtime: python3.6
       Timeout: 300
@@ -308,10 +320,7 @@ Resources:
         S3Key: !Ref pLambdaZipFile
       Environment:
         Variables:
-          EMAIL_RECIPIENT: !Ref pEmailTo
-          EMAIL_FROM: !Ref pEmailFrom
           S3_URL_PREFIX: !GetAtt [ImageBucket, WebsiteURL]
-
 
   S3ArchiveImageLambdaFunction:
     Type: AWS::Lambda::Function
@@ -351,13 +360,24 @@ Resources:
       Runtime: python2.7
       Timeout: 300
       Role: !GetAtt SecurityCameraLambdaRole.Arn
-      Environment:
-        Variables:
-          HOOK_URL: !Ref pSlackWebhookURL
-          SLACK_CHANNEL: !Ref pSlackChannel
       Code:
         S3Bucket: !Ref pDeployBucket
         S3Key: !Ref pLambdaZipFile
+
+  KeyFrameExtractionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "smartcamera-extract-keyframes-${pEnvironment}" 
+      Description: "smart-security-camera: Extract jpg every few seconds from video"
+      Handler: extract_kf.handler
+      Runtime: python3.6
+      Timeout: 300
+      MemorySize: 3008
+      Role: !GetAtt SecurityCameraLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pDeployBucket
+        S3Key: !Ref pExtractLambdaZipFile
+
 
   # This IAM Role defines the permissions the Step Machine requires to execute
   StateMachineExecutionRole:
@@ -383,12 +403,13 @@ Resources:
             Effect: Allow
             Resource:
               # Each Lambda function should be defined here
-              - !GetAtt NodemailerErrorHandlerLambdaFunction.Arn
+              - !GetAtt ErrorHandlerLambdaFunction.Arn
               - !GetAtt RekognitionImageAssessmentLambdaFunction.Arn
-              - !GetAtt NodemailerSendNotificationLambdaFunction.Arn
+              - !GetAtt SendEmailLambdaFunction.Arn
               - !GetAtt S3ArchiveImageLambdaFunction.Arn
               - !GetAtt GenerateIndexLambdaFunction.Arn
               - !GetAtt SlackNotificationFunction.Arn
+              - !GetAtt KeyFrameExtractionFunction.Arn
       - PolicyName: LambdaLogging
         PolicyDocument:
           Version: '2012-10-17'
@@ -406,32 +427,40 @@ Resources:
       DefinitionString: !Sub |-
         {
             "Comment": "Process incoming image files to find out if an email warning is required",
-            "StartAt": "RekognitionImageAssessmentLambdaFunction",
+            "StartAt": "KeyFrameExtractionFunction",
             "States": {
-                "NodemailerErrorHandlerLambdaFunction": {
+                "ErrorHandlerLambdaFunction": {
                     "Type": "Task",
-                    "Resource": "${NodemailerErrorHandlerLambdaFunction.Arn}" ,
+                    "Resource": "${ErrorHandlerLambdaFunction.Arn}" ,
                     "End": true
                 },
 
-
+                "KeyFrameExtractionFunction": {
+                    "Type": "Task",
+                    "Resource": "${KeyFrameExtractionFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "ErrorHandlerLambdaFunction"
+                    }],
+                    "Next": "RekognitionImageAssessmentLambdaFunction"
+                },
                 "RekognitionImageAssessmentLambdaFunction": {
                     "Type": "Task",
                     "Resource": "${RekognitionImageAssessmentLambdaFunction.Arn}",
                     "Catch": [{
                         "ErrorEquals": ["States.ALL"],
-                        "Next": "NodemailerErrorHandlerLambdaFunction"
+                        "Next": "ErrorHandlerLambdaFunction"
                     }],
-                    "Next": "MakeAlertChoice"
+                    "Next": "AreWeDone"
                 },
 
-                "MakeAlertChoice": {
+                "AreWeDone": {
                     "Type": "Choice",
                     "Choices": [
                         {
                             "Variable": "$.Alert",
                             "StringEquals": "true",
-                            "Next": "NodemailerSendNotificationLambdaFunction"
+                            "Next": "S3ArchiveImageLambdaFunction"
                         },
                         {
                             "Variable": "$.Complete",
@@ -442,21 +471,12 @@ Resources:
                     "Default": "RekognitionImageAssessmentLambdaFunction"
                 },
 
-                "NodemailerSendNotificationLambdaFunction": {
-                    "Type": "Task",
-                    "Resource": "${NodemailerSendNotificationLambdaFunction.Arn}",
-                    "Catch": [{
-                        "ErrorEquals": ["States.ALL"],
-                        "Next": "NodemailerErrorHandlerLambdaFunction"
-                    }],
-                    "Next": "S3ArchiveImageLambdaFunction"
-                },
                 "S3ArchiveImageLambdaFunction": {
                     "Type": "Task",
                     "Resource": "${S3ArchiveImageLambdaFunction.Arn}",
                     "Catch": [{
                         "ErrorEquals": ["States.ALL"],
-                        "Next": "NodemailerErrorHandlerLambdaFunction"
+                        "Next": "ErrorHandlerLambdaFunction"
                     }],
                     "Next": "GenerateIndexLambdaFunction"
                 },                
@@ -465,16 +485,36 @@ Resources:
                     "Resource": "${GenerateIndexLambdaFunction.Arn}",
                     "Catch": [{
                         "ErrorEquals": ["States.ALL"],
-                        "Next": "NodemailerErrorHandlerLambdaFunction"
+                        "Next": "ErrorHandlerLambdaFunction"
+                    }],
+                    "Next": "SendEmail"
+                },
+                "SendEmail": {
+                    "Type": "Choice",
+                    "Choices": [
+                        {
+                            "Variable": "$.Alert",
+                            "StringEquals": "true",
+                            "Next": "SendEmailLambdaFunction"
+                        }
+                    ],
+                    "Default": "SlackNotificationFunction"
+                },                
+                "SendEmailLambdaFunction": {
+                    "Type": "Task",
+                    "Resource": "${SendEmailLambdaFunction.Arn}",
+                    "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "ErrorHandlerLambdaFunction"
                     }],
                     "Next": "SlackNotificationFunction"
-                },
+                },                
                 "SlackNotificationFunction": {
                     "Type": "Task",
                     "Resource": "${SlackNotificationFunction.Arn}",
                     "Catch": [{
                         "ErrorEquals": ["States.ALL"],
-                        "Next": "NodemailerErrorHandlerLambdaFunction"
+                        "Next": "ErrorHandlerLambdaFunction"
                     }],
                     "End": true
                 }

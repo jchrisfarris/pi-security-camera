@@ -52,7 +52,7 @@ def lambda_handler(event, context):
 
   # print(html)
 
-  index_key = "archive/{:%Y-%m-%d}/index.html".format(datetime.datetime.now())
+  index_key = "archive/{}/index.html".format(today)
   index_url = prefix.format(os.environ['BUCKET_NAME']) + index_key
 
   client = boto3.client('s3')
