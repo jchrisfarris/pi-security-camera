@@ -6,7 +6,7 @@ PIP=pip3
 FILES=extract_kf.py
 
 
-package: clean test zipfile
+package: test clean zipfile
 
 #
 # Lambda function management

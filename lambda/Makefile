@@ -16,7 +16,7 @@ PIP=pip3
 FILES=error-handler.py publish-slack-notification.py s3-trigger-image-processing.py archive-image.py generate-index-page.py rekognition-image-assessment.py send-notification.py
 
 
-package: clean zipfile
+package: test clean zipfile
 
 #
 # Lambda function management
