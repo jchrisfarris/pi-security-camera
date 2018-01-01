@@ -2,7 +2,7 @@
 # Cookbook Name:: pht-camera
 # Recipe:: default
 #
-# Copyright 2017, PrimeHarbor Technologies
+# Copyright 2017-2018, PrimeHarbor Technologies
 #
 # All rights reserved - Do Not Redistribute
 #
@@ -112,9 +112,6 @@ end
   end
 end
 
-
-
-
 # Enable SSH
 directory '/home/pi/.ssh' do
   owner 'pi'
@@ -124,11 +121,14 @@ directory '/home/pi/.ssh' do
   recursive true
 end
 
-cookbook_file '/home/pi/.ssh/authorized_keys' do
-  source 'pi-camera.pub'
+template '/home/pi/.ssh/authorized_keys' do
+  source 'authorized_keys.erb'
   owner 'pi'
   group 'pi'
   mode 00600
+  variables(
+    keys: camera_data['authorized_keys']
+  )  
 end
 
 service 'motion' do
