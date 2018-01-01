@@ -1,5 +1,5 @@
-name             'pht-camera'
-maintainer       'PrimeHarbor Technologies'
+name             'smart-pi-camera'
+maintainer       'Chris Farris'
 maintainer_email 'chris@room17.com'
 license          'All rights reserved'
 description      'Deploy an Raspberry Pi based motion camera'
