@@ -3,7 +3,7 @@
 BUCKET="<%= @bucket %>"
 
 echo "uploading file $1"
-aws s3 cp $1 s3://${BUCKET}/upload/
+aws s3 cp $1 s3://${BUCKET}/motion-stills/
 if [ $? -eq 0 ] ; then
 	echo deleting file $1
 	sudo rm $1

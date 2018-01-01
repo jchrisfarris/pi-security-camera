@@ -2,10 +2,8 @@
 
 BUCKET="<%= @bucket %>"
 
-TODAY=`date +%Y-%m-%d`
-
 echo "uploading file $1"
-aws s3 cp $1 s3://${BUCKET}/movies/${TODAY}/
+aws s3 cp $1 s3://${BUCKET}/upload/
 if [ $? -eq 0 ] ; then
 	echo deleting file $1
 	sudo rm $1
