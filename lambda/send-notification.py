@@ -54,24 +54,18 @@ def lambda_handler(event, context):
     part.add_header('Content-Disposition', 'attachment', filename=image_filename)
     message.attach(part)
 
-    ses_client = boto3.client('ses')
-    response = ses_client.send_raw_email(
-        Source=message['From'],
-        RawMessage={
-         'Data': message.as_string(),
-    })
-
-
-
-
-
-
-
-
-
-
-
-
-
+    try:
+        ses_client = boto3.client('ses')
+        response = ses_client.send_raw_email(
+            Source=message['From'],
+            RawMessage={
+             'Data': message.as_string(),
+        })
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'MessageRejected':
+            logger.error("Email Address not Validated: {}".format(e))
+            # And pass
+        else:
+            raise ClientError(e)        
 
     return(event)
