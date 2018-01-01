@@ -75,15 +75,17 @@ Resources:
         Rules:
         - Id: ExpireOldVersions
           NoncurrentVersionExpirationInDays: '5'
+          AbortIncompleteMultipartUpload: 
+            DaysAfterInitiation: '1'
           Status: Enabled
-        # - Id: PurgeTmp
-        #   Prefix: "tmp/"
-        #   ExpirationInDays: '1'
-        #   Status: Enabled
-        # - Id: PurgeUpload
-        #   Prefix: "upload/"
-        #   ExpirationInDays: '7'
-        #   Status: Enabled  
+        - Id: PurgeTmp
+          Prefix: "tmp/"
+          ExpirationInDays: '1'
+          Status: Enabled
+        - Id: PurgeUpload
+          Prefix: "upload/"
+          ExpirationInDays: '7'
+          Status: Enabled  
       VersioningConfiguration:
         Status: Enabled
       CorsConfiguration:
