@@ -1,4 +1,8 @@
 
+
+# Customize these Settings
+export DEPLOYBUCKET ?= pht-deploy
+
 ifndef env
 $(error env is not set)
 endif
@@ -13,7 +17,6 @@ export AWS_TEMPLATE ?= cloudformation/smart-security-camera-Template.yaml
 export LAMBDA_PACKAGE ?= lambda-$(version).zip
 export manifest ?= cloudformation/smart-security-camera-Manifest-$(env).yaml
 export AWS_LAMBDA_FUNCTION_NAME=$(AWS_LAMBDA_FUNCTION_PREFIX)-$(env)
-export DEPLOYBUCKET ?= pht-deploy
 export OBJECT_KEY=$(AWS_LAMBDA_FUNCTION_NAME)/$(LAMBDA_PACKAGE)
 
 FUNCTIONS= smartcamera-errorhandler-$(env) smartcamera-image-assessment-$(env) smartcamera-trigger-statemachine-$(env) smartcamera-send-email-$(env) smartcamera-archive-image-$(env) smartcamera-generate-index-page-$(env) smartcamera-publish-slack-notification-$(env)
